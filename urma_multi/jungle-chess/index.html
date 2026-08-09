@@ -48,7 +48,7 @@
     }
 
     header h1 {
-      font-size: 1.8rem;
+      font-size: 2.4rem;
       font-weight: 700;
       letter-spacing: 0.15em;
       background: linear-gradient(135deg, #f1c40f, #e67e22);
@@ -57,15 +57,15 @@
       background-clip: text;
     }
 
-    header p { color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+    header p { color: var(--muted); font-size: 1.05rem; margin-top: 6px; }
 
     .game-wrap {
       display: flex;
-      gap: 24px;
+      gap: 32px;
       align-items: flex-start;
       flex-wrap: wrap;
       justify-content: center;
-      max-width: 1100px;
+      max-width: 1280px;
       width: 100%;
     }
 
@@ -75,10 +75,11 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 16px;
-      border-radius: 10px;
-      margin-bottom: 8px;
+      padding: 14px 20px;
+      border-radius: 12px;
+      margin-bottom: 10px;
       font-weight: 600;
+      font-size: 1.1rem;
       transition: all 0.3s;
     }
 
@@ -113,12 +114,12 @@
       display: grid;
       grid-template-columns: repeat(7, 1fr);
       grid-template-rows: repeat(9, 1fr);
-      gap: 3px;
+      gap: 4px;
       background: #5a3e28;
-      padding: 6px;
-      border-radius: 12px;
+      padding: 8px;
+      border-radius: 14px;
       box-shadow: 0 12px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
-      width: min(92vw, 420px);
+      width: min(96vw, 600px);
       aspect-ratio: 7 / 9;
     }
 
@@ -167,20 +168,21 @@
 
     .cell-label {
       position: absolute;
-      font-size: 0.55rem;
-      color: rgba(0,0,0,0.25);
-      top: 2px; left: 4px;
+      font-size: 0.75rem;
+      color: rgba(0,0,0,0.3);
+      top: 3px; left: 5px;
       pointer-events: none;
+      font-weight: 600;
     }
 
     .piece {
-      width: 78%;
-      height: 78%;
+      width: 82%;
+      height: 82%;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: clamp(0.9rem, 3.5vw, 1.3rem);
+      font-size: clamp(1.2rem, 4.5vw, 1.8rem);
       font-weight: 700;
       box-shadow: 0 3px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.25);
       transition: transform 0.15s;
@@ -193,17 +195,17 @@
     .piece .rank {
       position: absolute;
       bottom: -2px; right: -2px;
-      font-size: 0.55rem;
+      font-size: 0.7rem;
       background: rgba(0,0,0,0.5);
       border-radius: 50%;
-      width: 14px; height: 14px;
+      width: 18px; height: 18px;
       display: flex; align-items: center; justify-content: center;
     }
 
     .sidebar {
       flex: 1;
-      min-width: 260px;
-      max-width: 340px;
+      min-width: 300px;
+      max-width: 400px;
       display: flex;
       flex-direction: column;
       gap: 14px;
@@ -225,7 +227,7 @@
     }
 
     .status-msg {
-      font-size: 1.1rem;
+      font-size: 1.25rem;
       font-weight: 600;
       min-height: 1.5em;
       color: var(--highlight);
@@ -308,9 +310,9 @@
     .modal p { color: var(--muted); margin-bottom: 20px; }
     .modal .winner { font-size: 2rem; margin: 12px 0; }
 
-    @media (max-width: 700px) {
+    @media (max-width: 900px) {
       .game-wrap { flex-direction: column; align-items: center; }
-      .sidebar { max-width: 100%; width: min(92vw, 420px); }
+      .sidebar { max-width: 100%; width: min(96vw, 600px); }
     }
   </style>
 </head>
@@ -355,8 +357,8 @@
           <span>5 豹</span><b>＞ 4 狼 ＞ 3 狗</b>
           <span>2 猫</span><b>＞ 1 鼠</b>
         </div>
-        <p style="font-size:0.78rem;color:var(--muted);margin-top:10px;line-height:1.6">
-          鼠可吃象；象不能吃鼠。鼠可过河，狮虎可跳河。进入对方兽穴即胜。
+        <p style="font-size:0.9rem;color:var(--muted);margin-top:10px;line-height:1.6">
+          鼠在陆地上可吃象，在河中不能吃象。鼠可过河，狮虎可跳过河流直达对岸。陷阱在兽穴周围。进入对方兽穴即胜。
         </p>
       </div>
     </div>
@@ -396,9 +398,9 @@
       // Dens
       t[0][3] = CELL.DEN_P1; // blue den (top)
       t[8][3] = CELL.DEN_P0; // red den (bottom)
-      // Traps
-      t[2][2] = CELL.TRAP_P1; t[2][4] = CELL.TRAP_P1;
-      t[6][2] = CELL.TRAP_P0; t[6][4] = CELL.TRAP_P0;
+      // Traps around dens (洞穴周围)
+      t[0][2] = CELL.TRAP_P1; t[0][4] = CELL.TRAP_P1; t[1][3] = CELL.TRAP_P1; // 蓝方兽穴(3,0)周围
+      t[8][2] = CELL.TRAP_P0; t[8][4] = CELL.TRAP_P0; t[7][3] = CELL.TRAP_P0; // 红方兽穴(3,8)周围
       return t;
     }
 
@@ -442,19 +444,63 @@
     }
     function inBounds(r, c) { return r >= 0 && r < ROWS && c >= 0 && c < COLS; }
 
-    function canCapture(attacker, defender, defR, defC) {
+    function canCapture(attacker, defender, attR, attC, defR, defC) {
       if (!defender) return false;
       const aRank = attacker.rank, dRank = defender.rank;
       const defInTrap = trapOwner(defR, defC) === attacker.player;
       // Defender in attacker's trap → any attacker can capture
       if (defInTrap) return true;
-      // Special: rat vs elephant
-      if (aRank === 1 && dRank === 8) return true;
+      // Special: rat vs elephant — rat in river cannot eat elephant
+      if (aRank === 1 && dRank === 8) {
+        if (isRiver(attR, attC)) return false;
+        return true;
+      }
       if (aRank === 8 && dRank === 1) return false;
       // Rat in water: only rat can capture it
       if (isRiver(defR, defC) && dRank === 1 && aRank !== 1) return false;
       // Equal or higher rank attacker wins
       return aRank >= dRank;
+    }
+
+    function tryRiverJump(moves, board, fromR, fromC, toR, toC, piece, player, midCells) {
+      if (!inBounds(toR, toC)) return;
+      if (isRiver(toR, toC)) return; // 必须落到对岸陆地，不能跳进河里
+      if (denOwner(toR, toC) === player) return;
+
+      for (const [mr, mc] of midCells) {
+        if (!isRiver(mr, mc)) return;
+        const mid = board[mr][mc];
+        if (mid && mid.rank === 1) return; // 河中有鼠则阻挡
+      }
+
+      const target = board[toR][toC];
+      if (!target) {
+        if (!moves.some(m => m.r === toR && m.c === toC))
+          moves.push({ r: toR, c: toC, capture: false, jump: true });
+      } else if (target.player !== player && canCapture(piece, target, fromR, fromC, toR, toC)) {
+        if (!moves.some(m => m.r === toR && m.c === toC))
+          moves.push({ r: toR, c: toC, capture: true, jump: true });
+      }
+    }
+
+    function getRiverJumps(board, r, c, piece, player, moves) {
+      if (piece.rank !== 6 && piece.rank !== 7) return;
+
+      // 横向跳河：从河岸一侧直接跳到对岸（经过河中格，落在陆地）
+      if ([3, 4, 5].includes(r)) {
+        if (c === 0) tryRiverJump(moves, board, r, c, r, 3, piece, player, [[r,1],[r,2]]);
+        if (c === 3) {
+          tryRiverJump(moves, board, r, c, r, 0, piece, player, [[r,2],[r,1]]);
+          tryRiverJump(moves, board, r, c, r, 6, piece, player, [[r,4],[r,5]]);
+        }
+        if (c === 6) tryRiverJump(moves, board, r, c, r, 3, piece, player, [[r,5],[r,4]]);
+      }
+
+      // 纵向跳河：从河岸上/下方直接跳到对岸
+      if ([1, 2, 4, 5].includes(c)) {
+        if (r === 2) tryRiverJump(moves, board, r, c, 6, c, piece, player, [[3,c],[4,c],[5,c]]);
+        if (r === 6) tryRiverJump(moves, board, r, c, 2, c, piece, player, [[5,c],[4,c],[3,c]]);
+      }
     }
 
     function getMoves(board, r, c, piece) {
@@ -473,39 +519,13 @@
         const target = board[nr][nc];
         if (!target) {
           moves.push({ r: nr, c: nc, capture: false });
-        } else if (target.player !== player && canCapture(piece, target, nr, nc)) {
+        } else if (target.player !== player && canCapture(piece, target, r, c, nr, nc)) {
           moves.push({ r: nr, c: nc, capture: true });
         }
       }
 
-      // Lion & Tiger river jump (horizontal & vertical)
-      if (piece.rank === 6 || piece.rank === 7) {
-        for (const [dr, dc] of dirs) {
-          // Try jump distance 3 (over 2 river cells)
-          const nr = r + dr * 3, nc = c + dc * 3;
-          if (!inBounds(nr, nc)) continue;
-          if (denOwner(nr, nc) === player) continue;
-
-          // Check intermediate cells are river and no blocking rat
-          let blocked = false;
-          for (let i = 1; i <= 2; i++) {
-            const mr = r + dr * i, mc = c + dc * i;
-            if (!isRiver(mr, mc)) { blocked = true; break; }
-            const mid = board[mr][mc];
-            if (mid && mid.rank === 1) { blocked = true; break; }
-          }
-          if (blocked) continue;
-
-          const target = board[nr][nc];
-          if (!target) {
-            if (!moves.some(m => m.r === nr && m.c === nc))
-              moves.push({ r: nr, c: nc, capture: false, jump: true });
-          } else if (target.player !== player && canCapture(piece, target, nr, nc)) {
-            if (!moves.some(m => m.r === nr && m.c === nc))
-              moves.push({ r: nr, c: nc, capture: true, jump: true });
-          }
-        }
-      }
+      // 狮虎跳河：直达对岸陆地
+      getRiverJumps(board, r, c, piece, player, moves);
 
       return moves;
     }
