@@ -338,6 +338,28 @@
     button:hover { transform: translateY(-1px); filter: brightness(1.1); }
     button:active { transform: translateY(0); }
 
+    button.start-round {
+      background: linear-gradient(135deg, #059669, #047857);
+      color: #fff;
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    .pregame-panel {
+      display: none;
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(124, 58, 237, 0.15);
+      border: 1px solid rgba(167, 139, 250, 0.35);
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .pregame-panel.show { display: block; }
+    .pregame-panel strong { color: var(--highlight); }
+
     .overlay {
       display: none;
       position: fixed;
@@ -398,6 +420,10 @@
       <div class="card">
         <h3>当前状态</h3>
         <div class="status-msg" id="status">蓝方回合，请选择棋子</div>
+        <div class="pregame-panel" id="pregame-panel">
+          <strong>开局前消除</strong>：点击对方棋子消除，每枚扣 <strong>1 亿</strong> 积分（双方各自消耗自己的积分）。
+          <button class="start-round" id="btn-start-round">开始对局</button>
+        </div>
         <div class="btn-row" style="margin-top:12px">
           <button class="primary" id="btn-restart">重新开始</button>
           <button class="secondary" id="btn-undo">悔棋</button>
@@ -417,7 +443,9 @@
           <span>2 猫</span><b>＞ 1 鼠</b>
         </div>
         <p style="font-size:0.9rem;color:var(--muted);margin-top:10px;line-height:1.6">
-          鼠在陆地上可吃象，在河中不能吃象。鼠可过河，狮虎可跳过河流直达对岸。陷阱在兽穴周围。进入对方兽穴即胜。
+          鼠在陆地上可吃象，在河中不能吃象。狮虎可跳过河流直达对岸。陷阱在兽穴周围。<br>
+          <b style="color:var(--highlight)">获胜 +10 亿分 + 烟花庆祝！</b><br>
+          每局<strong>开始前</strong>可用积分消除对方棋子，每消除 1 枚扣 <strong>1 亿</strong> 积分。
         </p>
       </div>
     </div>
@@ -431,9 +459,8 @@
       <div class="winner" id="winner-text"></div>
       <p id="win-reason"></p>
       <div class="score-reward" id="score-reward"></div>
-      <div class="remove-info" id="remove-info"></div>
+      <div class="remove-info" id="remove-info">下一局开始前可消耗积分消除对方棋子（每枚 1 亿）。</div>
       <div class="btn-row-modal">
-        <button class="primary" id="btn-remove-mode" style="display:none">点选对方棋子消除（剩余 <span id="remove-left">0</span> 次）</button>
         <button class="primary" id="btn-play-again" style="width:100%">下一局</button>
       </div>
     </div>
@@ -442,8 +469,7 @@
   <script>
     const COLS = 7, ROWS = 9;
     const WIN_REWARD = 1_000_000_000;      // 十亿分
-    const REMOVE_PER_100M = 1;             // 每一亿分可消一子
-    const REMOVE_UNIT = 100_000_000;       // 一亿
+    const REMOVE_UNIT = 100_000_000;       // 一亿（每消除一子扣除）
     const PIECES = [
       { rank: 1, name: '鼠', emoji: '🐭' },
       { rank: 2, name: '猫', emoji: '🐱' },
@@ -612,10 +638,7 @@
   // ── Game State ──
     let board, currentPlayer, selected, validMoves, history, gameOver, logEntries;
     let scores = [0, 0];
-    let removalsUsed = [0, 0];
-    let lastWinner = null;
-    let removalMode = false;
-    let removalCreditsLeft = 0;
+    let preGameRemovalPhase = false;
 
     function formatScore(n) {
       if (n >= 100_000_000) return (n / 100_000_000).toFixed(0) + ' 亿';
@@ -623,9 +646,8 @@
       return n.toLocaleString();
     }
 
-    function getAvailableRemovals(player) {
-      const earned = Math.floor(scores[player] / REMOVE_UNIT) * REMOVE_PER_100M;
-      return Math.max(0, earned - removalsUsed[player]);
+    function canAffordRemoval(player) {
+      return scores[player] >= REMOVE_UNIT;
     }
 
     function updateScoreDisplay() {
@@ -691,6 +713,23 @@
       tick();
     }
 
+    function enterPreGameRemovalPhase() {
+      preGameRemovalPhase = true;
+      selected = null;
+      validMoves = [];
+      gameOver = false;
+      document.getElementById('pregame-panel').classList.add('show');
+      updateStatus('开局前消除：双方可点击对方棋子消除，每枚扣 1 亿积分。完成后点击「开始对局」。');
+      render();
+    }
+
+    function startRoundPlay() {
+      preGameRemovalPhase = false;
+      document.getElementById('pregame-panel').classList.remove('show');
+      updateStatus(`${PLAYER_NAMES[currentPlayer]}回合，请选择棋子`);
+      render();
+    }
+
     function initGame(resetScores = false) {
       board = initialBoard();
       currentPlayer = 1;
@@ -698,15 +737,12 @@
       validMoves = [];
       history = [];
       gameOver = false;
-      removalMode = false;
-      removalCreditsLeft = 0;
-      lastWinner = null;
+      preGameRemovalPhase = false;
       if (resetScores) {
         scores = [0, 0];
-        removalsUsed = [0, 0];
       }
       document.getElementById('overlay').classList.remove('show');
-      document.getElementById('btn-remove-mode').style.display = 'none';
+      document.getElementById('pregame-panel').classList.remove('show');
       updateScoreDisplay();
       render();
       updateStatus(`${PLAYER_NAMES[1]}回合，请选择棋子`);
@@ -720,13 +756,16 @@
       validMoves = [];
       history = [];
       gameOver = false;
-      removalMode = false;
-      removalCreditsLeft = 0;
-      lastWinner = null;
       document.getElementById('overlay').classList.remove('show');
-      document.getElementById('btn-remove-mode').style.display = 'none';
-      render();
-      updateStatus(`${PLAYER_NAMES[1]}回合，请选择棋子`);
+      updateScoreDisplay();
+      if (scores[0] >= REMOVE_UNIT || scores[1] >= REMOVE_UNIT) {
+        enterPreGameRemovalPhase();
+      } else {
+        preGameRemovalPhase = false;
+        document.getElementById('pregame-panel').classList.remove('show');
+        render();
+        updateStatus(`${PLAYER_NAMES[1]}回合，请选择棋子`);
+      }
     }
 
     function updateStatus(msg) {
@@ -759,54 +798,35 @@
 
     function endGame(winner, reason) {
       gameOver = true;
-      lastWinner = winner;
       scores[winner] += WIN_REWARD;
-      removalCreditsLeft = Math.floor(WIN_REWARD / REMOVE_UNIT);
       updateScoreDisplay();
 
       document.getElementById('winner-text').textContent = `🎉 ${PLAYER_NAMES[winner]} 获胜！`;
       document.getElementById('winner-text').style.color = winner === 0 ? 'var(--red-light)' : 'var(--blue-light)';
       document.getElementById('win-reason').textContent = reason;
       document.getElementById('score-reward').textContent = `+10 亿积分！当前总分：${formatScore(scores[winner])}`;
-      document.getElementById('remove-info').textContent =
-        `每 1 亿分可消除对方 1 个子，本局获得 ${removalCreditsLeft} 次消除机会`;
-      document.getElementById('remove-left').textContent = removalCreditsLeft;
-      document.getElementById('btn-remove-mode').style.display = removalCreditsLeft > 0 ? 'block' : 'none';
       document.getElementById('overlay').classList.add('show');
 
       startFireworks();
-      addLog(`获胜！+10亿分，可消除对方 ${removalCreditsLeft} 子`, winner);
+      addLog(`获胜！+10亿分`, winner);
       updateStatus(`🎆 ${PLAYER_NAMES[winner]}胜利！+10亿分`);
     }
 
-    function enterRemovalMode() {
-      if (!lastWinner || removalCreditsLeft <= 0) return;
-      removalMode = true;
-      document.getElementById('overlay').classList.remove('show');
-      selected = null;
-      validMoves = [];
-      updateStatus(`${PLAYER_NAMES[lastWinner]}：点击对方棋子消除（剩余 ${removalCreditsLeft} 次）`);
-      render();
-    }
-
-    function removeOpponentPiece(r, c) {
+    function removeOpponentPiece(r, c, removerPlayer) {
       const piece = board[r][c];
-      if (!piece || piece.player === lastWinner || removalCreditsLeft <= 0) return;
+      if (!piece || piece.player === removerPlayer || !canAffordRemoval(removerPlayer)) return false;
 
       const info = PIECES[piece.rank - 1];
+      const victim = piece.player;
+      scores[removerPlayer] -= REMOVE_UNIT;
       board[r][c] = null;
-      removalsUsed[lastWinner]++;
-      removalCreditsLeft--;
-      document.getElementById('remove-left').textContent = removalCreditsLeft;
-      addLog(`用积分消除对方 ${info.emoji}${info.name}`, lastWinner);
-
-      if (removalCreditsLeft <= 0) {
-        removalMode = false;
-        updateStatus('消除完毕，点击「下一局」继续');
-      } else {
-        updateStatus(`${PLAYER_NAMES[lastWinner]}：继续点选对方棋子（剩余 ${removalCreditsLeft} 次）`);
-      }
+      updateScoreDisplay();
+      addLog(`消耗 1 亿分消除对方 ${info.emoji}${info.name}（剩余 ${formatScore(scores[removerPlayer])}）`, removerPlayer);
+      updateStatus(
+        `${PLAYER_NAMES[removerPlayer]} 消除了 ${PLAYER_NAMES[victim]} 的 ${info.emoji}${info.name}，扣除 1 亿积分`
+      );
       render();
+      return true;
     }
 
     function applyMove(fromR, fromC, toR, toC) {
@@ -885,8 +905,10 @@
           if (selected && selected.r === r && selected.c === c) cell.classList.add('selected');
           const hint = validMoves.find(m => m.r === r && m.c === c);
           if (hint) cell.classList.add(hint.capture ? 'capture-hint' : 'move-hint');
-          if (removalMode && board[r][c] && board[r][c].player !== lastWinner)
-            cell.classList.add('remove-hint');
+          if (preGameRemovalPhase && board[r][c]) {
+            const remover = board[r][c].player === 0 ? 1 : 0;
+            if (canAffordRemoval(remover)) cell.classList.add('remove-hint');
+          }
 
           const piece = board[r][c];
           if (piece) {
@@ -916,8 +938,15 @@
     }
 
     function onCellClick(r, c) {
-      if (removalMode) {
-        removeOpponentPiece(r, c);
+      if (preGameRemovalPhase) {
+        const piece = board[r][c];
+        if (!piece) return;
+        const remover = piece.player === 0 ? 1 : 0;
+        if (canAffordRemoval(remover)) {
+          removeOpponentPiece(r, c, remover);
+        } else {
+          updateStatus(`${PLAYER_NAMES[remover]} 积分不足 1 亿，无法消除该棋子`);
+        }
         return;
       }
       if (gameOver) return;
@@ -949,7 +978,7 @@
 
     document.getElementById('btn-restart').addEventListener('click', () => initGame(true));
     document.getElementById('btn-play-again').addEventListener('click', startNextRound);
-    document.getElementById('btn-remove-mode').addEventListener('click', enterRemovalMode);
+    document.getElementById('btn-start-round').addEventListener('click', startRoundPlay);
     document.getElementById('btn-undo').addEventListener('click', undo);
 
     logEntries = [];
