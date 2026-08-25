@@ -1,6 +1,7 @@
-# AICPU 自定义通信算子设计指导文档
+# AICPU 自定义通信算子设计指导文档（Ascend 950 / A5）
 
-> 基于 `examples/05_custom_ops_allgather/aicpu` 抽象，并对照 `examples/04_custom_ops_p2p` 修正资源与平台差异。  
+> 基于 `examples/05_custom_ops_allgather/aicpu` 抽象。  
+> **本文档仅面向 Ascend 950（A5）场景**，不考虑 A2/A3。  
 > 目标：指导 Broadcast / ReduceScatter / AllReduce / AllToAll / SendRecv 等自定义通信算子的方案设计、代码组织与评审。
 
 ---
@@ -9,18 +10,24 @@
 
 一句话：**Host 负责参数检查、通信域级资源准备与 ASC 下发；AICPU 负责基于 HCOMM 原语执行通信编排；可复用资源按 `(comm, tag, engine)` 缓存，stream 绑定同步句柄每次调用刷新。**
 
-### 0.1 串讲结构（6 页）
+### 0.1 适用范围
+
+- 芯片：**仅 Ascend 950（A5）**
+- 链路与原语：按 A5 能力使用（如 UB_CTP + Write 等，以 HCOMM/HCCL A5 接口为准）
+- 不讨论 A2/A3 兼容分支、跨代协议差异或条件编译平台层
+
+### 0.2 串讲结构（6 页）
 
 | 页 | 讲什么 | 对应章节 | 听众带走的结论 |
 |---|---|---|---|
-| 1 | 目标与分层框架（L0~L3） | §0~§1 | 不是“一套 ExecOp 打天下”，而是骨架 + 拓扑 + 算子 + 平台 |
+| 1 | 目标与分层框架（L0~L2） | §0~§1 | 不是“一套 ExecOp 打天下”，而是骨架 + 拓扑 + 算子 |
 | 2 | 接口、参数与资源真相表 | §2 | 双 engine、tag 缓存键、stream thread 每调刷新 |
 | 3 | Host / AICPU 时序与 ASC 默认下发 | §3~§4 | 先 notify 再 launch 的窗口约束；BatchMode 成对 |
 | 4 | 阶段表、notify 与 buffer 布局 | §5 | 每算子强制产出三张表 |
 | 5 | 异常、并发与反模式 | §6 | 失败不挂死；禁止双份算法与缓存 stream thread |
 | 6 | 测试、工程闭环与评审门禁 | §7~§8 | 白名单/签名/ASC 必测；清单过审 |
 
-### 0.2 五条硬约束
+### 0.3 五条硬约束
 
 1. **控制面 / 数据面分离**：Host 准备资源并 ASC 下发；AICPU 只消费上下文并编排。
 2. **资源与调用参数分离**：CCL / thread / channel 可复用；input/output/count/stream 句柄不可进复用 ctx。
@@ -28,20 +35,20 @@
 4. **阶段可评审**：每个算子必须有阶段表、notify 索引表、buffer 字节布局。
 5. **失败可收敛**：所有 wait 有 record；BatchMode start/end 成对；异常不得导致对端永久等待。
 
-### 0.3 目标与非目标
+### 0.4 目标与非目标
 
 **目标**
 
-- 独立算子包构建、安装、部署。
+- 独立算子包构建、安装、部署（A5）。
 - Host 侧稳定 C API；AICPU 侧编排与 HCOMM 调用。
 - 通信域级资源复用；stream 绑定同步资源每调刷新。
 - 算法差异收敛到拓扑策略 + `ExecOp`。
-- 默认同 ASC 下发；具备同步、资源、异常与测试方法。
+- 默认 ASC 下发；具备同步、资源、异常与测试方法。
 
 **非目标**
 
+- A2/A3 或其他芯片代际支持。
 - 自动选择最优拓扑（Ring/Mesh/Tree）。
-- 跨芯片代际无条件兼容（A2/A3/A5 在 L3 声明）。
 - 多 stream 同 tag 无锁并发（默认串行化或分 tag）。
 
 ---
@@ -73,21 +80,20 @@ flowchart LR
 主链路：
 
 ```text
-Host API -> 填 OpParam -> 刷新 stream Host thread
+Host API -> 填 OpParam -> 确认 A5 -> 刷新 stream Host thread
   -> 创建/复用 (comm, tag) 双 engine 资源
   -> Host notify AICPU -> ASC 下发
   -> AICPU: BatchModeStart -> wait -> ExecOp -> notify Host -> BatchModeEnd
   -> Host wait -> 返回
 ```
 
-### 1.2 分层模板（L0~L3）
+### 1.2 分层模板（L0~L2）
 
 | 层级 | 名称 | 内容 | 谁来改 |
 |---|---|---|---|
 | L0 | 通用骨架 | API、`OpParam`、双 engine 复用、Host↔AICPU notify、BatchMode、ASC 下发、打包 | 所有算子共享 |
-| L1 | 拓扑策略 | Mesh / Ring / P2P；thread/channel 公式；链路协议 | 按拓扑选 |
+| L1 | 拓扑策略 | Mesh / Ring / P2P；thread/channel 公式；链路与传输原语选型 | 按拓扑选 |
 | L2 | 算子策略 | 各算子 `ExecOp`、阶段表、buffer 布局 | 每个算子必写 |
-| L3 | 平台差异 | A5 UB_CTP vs A2/A3 HCCS；Write vs Read；是否 `HcommAcquireComm` | 按芯片声明 |
 
 **反模式**：把 AllGather Mesh Write 当成万能框架，用 if-else 塞进单个 `ExecOp`。
 
@@ -145,7 +151,7 @@ HcclResult HcclXxxCustom(
 | AllToAll | send/recv 分片描述 |
 | SendRecv | peer rank；建议独立 tag 或方向后缀 |
 
-必须写清：input/output 布局与字节公式；`count` 为元素个数；dataType 范围；芯片支持范围；错误码语义。
+必须写清：input/output 布局与字节公式；`count` 为元素个数；dataType 范围；**仅支持 A5**；错误码语义。Host 应对非 A5 设备直接返回明确错误。
 
 ### 2.2 参数模型
 
@@ -154,7 +160,7 @@ HcclResult HcclXxxCustom(
 ```text
 OpParam                      # 一次调用，禁止整包跨调用缓存
 ├── tag / commName / opType
-├── myRank / rankSize / devType
+├── myRank / rankSize / devType   # devType 用于 A5 门禁校验
 ├── inputPtr / outputPtr / count / dataType / ...
 ├── cpuThread / aicpuThreadOnCpu / cpuThreadOnAicpu
 ├── aicpuRecordCpuIdx
@@ -231,7 +237,7 @@ flowchart TB
 HcclXxxCustom
   1. 参数检查
   2. 填充 OpParam（稳定 tag）
-  3. 校验 device type / dataType
+  3. 确认设备为 A5；校验 dataType
   4. 获取 commName / rankId / rankSize
   5. 申请 stream Host thread 并 Export 到 AICPU
   6. 创建或复用双 engine 资源
@@ -250,7 +256,7 @@ sequenceDiagram
     participant A as AICPU Kernel
 
     U->>H: 自定义通信 API
-    H->>H: 检查 / OpParam / 刷新 stream thread
+    H->>H: 检查 / A5 门禁 / OpParam / 刷新 stream thread
     H->>R: Get或Create (comm,tag)
     R-->>H: resCtxDevice / 同步句柄
     H->>A: Host notify
@@ -297,7 +303,7 @@ ASC 入口
   -> 返回状态
 ```
 
-要求：AICPU **不重新申请**资源；Host/Device 同步成对；BatchMode 推荐统一出口/RAII。平台若需要（部分 A2/A3 P2P）再声明 `HcommAcquireComm/ReleaseComm`。
+要求：AICPU **不重新申请**资源；Host/Device 同步成对；BatchMode 推荐统一出口/RAII。
 
 ```mermaid
 sequenceDiagram
@@ -413,6 +419,7 @@ for each slice:
 
 | 场景 | 要求 |
 |---|---|
+| 非 A5 设备 | Host 直接失败返回，不下发 |
 | Host 已 notify，ASC launch 失败 | 补偿或超时回收，避免空等 |
 | AICPU wait/ExecOp 失败 | 仍尽量 `BatchModeEnd`；明确错误返回 Host |
 | 单 rank 失败 | 其他 rank wait 须可超时退出 |
@@ -463,11 +470,11 @@ bash build.sh --vendor=cust --ops=<op_name> --custom_ops_path=./path/to/custom_o
 
 ### 7.2 测试覆盖
 
-- 多卡正确性（自动校验）。
+- **A5 多卡**正确性（自动校验）。
 - `rankSize==1`；不同 count/dataType；超 CCL 的大数据 loop。
 - **连续两次调用**验证 engine ctx 复用（不是复用 stream thread）。
 - 多通信域；多 stream（按 §6.2 规则）。
-- 非法参数、ASC 下发失败、notify 超时。
+- 非法参数、非 A5 门禁、ASC 下发失败、notify 超时。
 - **ASC 默认路径必测**；保留 ACLRT 时做双路径一致性。
 
 建议骨架：每卡建 comm/stream/buffer → 调算子 → 同步校验 → 二次调用验证复用 → 释放。
@@ -479,19 +486,19 @@ bash build.sh --vendor=cust --ops=<op_name> --custom_ops_path=./path/to/custom_o
 ### 8.1 开发顺序
 
 1. 定义 L2 语义与字节布局。  
-2. 选择 L1 拓扑与 L3 平台，给出资源公式。  
+2. 选择 L1 拓扑，给出 thread/channel/notify 公式。  
 3. 设计 API 与 tag。  
 4. 产出阶段表、notify 索引表、buffer 布局。  
-5. 实现 Host（双 engine、ASC、失败补偿）与唯一 `ExecOp`。  
-6. 完成 CMake/JSON/签名/安装说明与 testcase。  
+5. 实现 Host（A5 门禁、双 engine、ASC、失败补偿）与唯一 `ExecOp`。  
+6. 完成 CMake/JSON/签名/安装说明与 A5 testcase。  
 7. 按下表过审。
 
 ### 8.2 检查清单
 
 **架构与接口**
 
-- [ ] 按 L0~L3 声明差异落点；默认 ASC 且 ExecOp 单一源
-- [ ] API/布局/count 单位/dataType/芯片范围明确
+- [ ] 按 L0~L2 声明差异落点；默认 ASC 且 ExecOp 单一源
+- [ ] 明确仅支持 A5；API/布局/count 单位/dataType 明确
 
 **资源**
 
@@ -508,7 +515,7 @@ bash build.sh --vendor=cust --ops=<op_name> --custom_ops_path=./path/to/custom_o
 **异常、测试与工程**
 
 - [ ] 异常不导致对端死等；BatchMode 成对；并发策略写死
-- [ ] 自动校验 testcase；覆盖复用/边界/超时/下发失败；ASC 必测
+- [ ] A5 自动校验 testcase；覆盖复用/边界/超时/下发失败；ASC 必测
 - [ ] 白名单、签名、安装路径、环境变量说明齐全
 
 ---
@@ -517,7 +524,7 @@ bash build.sh --vendor=cust --ops=<op_name> --custom_ops_path=./path/to/custom_o
 
 | 设计概念 | AllGather AICPU 样例落点 |
 |---|---|
-| Host API / 双 engine 复用 | `op_host/allgather.cc`（`InitAicpuResource`） |
+| Host API / A5 门禁 / 双 engine 复用 | `op_host/allgather.cc`（`InitAicpuResource`） |
 | stream thread 刷新 | 每调 `HcclThreadAcquireWithStream` + `Export` |
 | OpParam / AlgResourceCtx | `inc/common.h` |
 | ASC 下发 | `launch_kernel_asc.asc`；兼容路径见 `launch_kernel.cc` |
