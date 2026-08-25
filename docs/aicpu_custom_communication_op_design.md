@@ -16,16 +16,14 @@
 - 链路与原语：按 A5 能力使用（如 UB_CTP + Write，以 HCOMM/HCCL A5 接口为准）
 - 不讨论 A2/A3 兼容分支或跨代协议差异
 
-### 串讲结构（6 页 = 6 章）
+### 串讲结构（4 页 = 4 章）
 
 | 页/章 | 标题 | 听众带走的结论 |
 |---|---|---|
-| 0 | 摘要、硬约束与范围 | A5-only；五条硬约束 |
-| 1 | 架构、分层与目录 | L0 骨架 + L1 拓扑 + L2 算子，不是一套 ExecOp 打天下 |
-| 2 | 参数与资源模型 | 双 engine、tag 缓存键、stream thread 每调刷新 |
-| 3 | 端到端执行链路 | Host → ASC → AICPU → ExecOp；notify/BatchMode 成对 |
-| 4 | 同步、阶段表与 buffer | 每算子强制三张表 |
-| 5 | 质量与过审 | 异常不挂死；ASC 必测；清单过审 |
+| 0 | 摘要、硬约束、禁止项与过审门禁 | A5-only；什么必须做、什么禁止做 |
+| 1 | 架构、分层、目录与工程测试 | L0~L2；能装能跑能测 |
+| 2 | 参数与资源模型 | 双 engine、tag 键、stream thread 每调刷新 |
+| 3 | 端到端执行与算法评审 | Host→ASC→AICPU→ExecOp；阶段表/buffer/异常收敛 |
 
 ### 五条硬约束
 
@@ -37,13 +35,47 @@
 
 ### 目标与非目标
 
-**目标**：A5 上独立算子包构建部署；稳定 Host C API；通信域级资源复用；差异收敛到拓扑 + `ExecOp`；默认 ASC；具备同步/异常/测试方法。
+**目标**：A5 上独立算子包构建部署；稳定 Host C API；通信域级资源复用；差异收敛到拓扑 + `ExecOp`；默认 ASC。
 
 **非目标**：A2/A3 支持；自动选最优拓扑；同 `(comm, tag)` 多 stream 无锁并发。
 
+### 禁止项（原反模式）
+
+| 禁止 | 正确做法 |
+|---|---|
+| 缓存 stream 绑定 thread | 每调 Acquire+Export；只放 OpParam |
+| ASC/C++ 双份算法 | 单一 `exec_op` |
+| notify 不成对 / 分支不对称 | 阶段表逐阶段审 |
+| CCL 越界 | 字节布局 + 对齐 bound |
+| 多算子共用粗 tag | tag 含 op/topo/版本 |
+| 先 notify 后 launch 失败不管 | 失败补偿/超时 |
+| BatchMode 漏 End | 统一出口 |
+| Mesh AllGather 当万能 | 走 L1/L2 |
+| 忽略白名单/签名 | 工程闭环写进方案 |
+
+### 开发顺序与过审清单
+
+**开发顺序**
+
+1. 定义 L2 语义与字节布局；选 L1 拓扑与资源公式  
+2. 设计 API 与 tag  
+3. 产出阶段表、notify 索引表、buffer 布局与回滚说明  
+4. 实现 Host（A5 门禁、双 engine、ASC、失败补偿）与唯一 `ExecOp`  
+5. CMake/JSON/签名/安装与 A5 testcase  
+6. 按下表过审  
+
+**检查清单**
+
+- [ ] L0~L2 清晰；默认 ASC；ExecOp 单一源；仅 A5
+- [ ] 资源真相表齐全；`(comm, tag, engine)`；stream 句柄每调刷新且未进复用 ctx
+- [ ] 阶段表、notify 索引表、字节布局齐全；notify 成对；无死锁
+- [ ] 分片 loop 与 `rankSize==1`；异常不致对端死等；BatchMode 成对；并发策略写死
+- [ ] A5 自动校验；复用/边界/超时/失败路径；ASC 必测
+- [ ] 白名单、签名、安装路径、环境变量齐全
+
 ---
 
-## 1. 架构、分层与目录
+## 1. 架构、分层、目录与工程测试
 
 ### 1.1 逻辑层次与主链路
 
@@ -108,8 +140,24 @@ custom_op/
 | 工程闭环 | 仓根 `build.sh`、白名单、`scripts/*_check_cfg.xml` |
 
 - **禁止**在 ASC 入口与 `exec_op.cc` 各写一份算法。
-- 含 `std::vector` 的 ctx 用 `binary_stream`；纯 POD 可用 memcpy，须在方案中显式选择。
+- 含 `std::vector` 的 ctx 用 `binary_stream`；纯 POD 可用 memcpy，须显式选择。
 - 历史样例可能默认 ACLRT；**新算子默认 ASC**，双路径须「单一 ExecOp + ASC 必测」。
+
+### 1.4 构建、安装与测试
+
+| 产物 | 安装位置 |
+|---|---|
+| Host so / 头文件 | `opp/vendors/<vendor>/lib64`、`include` |
+| AICPU 包 / JSON | `opp/vendors/<vendor>/aicpu/kernel`、`config` |
+| 脚本/签名 | `opp/vendors/<vendor>/scripts` |
+
+```bash
+bash build.sh --vendor=cust --ops=<op_name> --custom_ops_path=./path/to/custom_op
+```
+
+安装后：白名单 `ascend_package_load.ini`；按规范处理签名；Host so 运行时可见。
+
+**测试至少覆盖**：A5 多卡自动校验；`rankSize==1`；不同 count/dataType；超 CCL loop；**二次调用**验证 engine ctx 复用；多通信域/多 stream（并发策略见 §3）；非法参数与非 A5 门禁；ASC 下发失败与 notify 超时；**ASC 必测**。
 
 ---
 
@@ -133,8 +181,6 @@ HcclResult HcclXxxCustom(
 须写清：布局与字节公式；`count` 为元素个数；dataType 范围；**仅 A5**；错误码。非 A5 直接失败返回。
 
 ### 2.2 参数模型
-
-实现层只保留两类结构：
 
 ```text
 OpParam                      # 一次调用，禁止整包跨调用缓存
@@ -188,7 +234,7 @@ flowchart TB
     F --> G
 ```
 
-### 2.5 L1 拓扑资源公式（示例）
+### 2.5 L1 拓扑资源与 notify 规划
 
 | 拓扑 | thread（示意） | channel | 备注 |
 |---|---|---|---|
@@ -198,9 +244,17 @@ flowchart TB
 
 主 thread 隔离：slave 同步 notify + **Host 同步 notify**（如 `aicpuRecordCpuIdx = notifyNumOnMainThread`）。
 
+**notify 索引表示例（Mesh AllGather）**
+
+| 域 | index | 用途 |
+|---|---|---|
+| channel | 0 / 1 / 2 | ACK / DATA / 预留（不用须标明） |
+| main thread（算法） | `0 .. slave-1` | slave 完成同步 |
+| main thread（Host） | `notifyNumOnMainThread` | Host↔AICPU |
+
 ---
 
-## 3. 端到端执行链路
+## 3. 端到端执行与算法评审
 
 ### 3.1 Host 主流程
 
@@ -298,31 +352,19 @@ ExecOp
 | AllToAll | 每 remote 不同分片 |
 | SendRecv | 指定 peer；Send/Recv 对称配对 |
 
----
+### 3.5 算法评审要素（阶段表 / buffer / 同步）
 
-## 4. 同步、阶段表与 buffer
+**强制产出物**
 
-### 4.1 强制产出物（门禁，只列一次）
+1. 每 rank × 每阶段行为表（含 root/peer）  
+2. notify 索引分配表（见 §2.5；Host / thread / channel 分区）  
+3. input / CCL / output 字节布局与分片公式  
+4. `rankSize==1` 与失败回滚说明  
+5. BatchMode 与 Host notify 成对保证  
 
-每个新算子评审必须附：
+**三类同步**：Host↔AICPU；AICPU thread 间；rank 间 channel。原则：wait/record 成对；各 rank **阶段顺序**一致；Host 槽位与算法槽位隔离。
 
-1. 每 rank × 每阶段行为表（含 root/peer）
-2. notify 索引分配表（Host / thread / channel 分区）
-3. input / CCL / output 字节布局与分片公式
-4. `rankSize==1` 与失败回滚说明
-5. BatchMode 与 Host notify 成对保证
-
-### 4.2 三类同步
-
-| 类型 | 作用 |
-|---|---|
-| Host ↔ AICPU | stream 与 kernel 顺序 |
-| AICPU thread 间 | 同 rank 多 thread 阶段对齐 |
-| rank 间 channel | 跨 rank 读写前后顺序 |
-
-原则：wait/record 成对；各 rank **阶段顺序**一致；notify index 集中定义；Host 槽位与算法槽位隔离。
-
-### 4.3 阶段表模板（按 loop）
+**阶段表模板（按 loop）**
 
 ```text
 for each slice:
@@ -335,15 +377,7 @@ for each slice:
 | 交换 | write/read + 握手 | 配对 wait/record | channel notify | CCL ↔ remote |
 | 收敛 | 写回 / reduce | 同步执行 | thread sync | CCL → output |
 
-### 4.4 notify 索引表示例（Mesh AllGather）
-
-| 域 | index | 用途 |
-|---|---|---|
-| channel | 0 / 1 / 2 | ACK / DATA / 预留（不用须标明） |
-| main thread（算法） | `0 .. slave-1` | slave 完成同步 |
-| main thread（Host） | `notifyNumOnMainThread` | Host↔AICPU |
-
-### 4.5 Buffer 模型
+**Buffer**
 
 | buffer | 所属 | 用途 |
 |---|---|---|
@@ -361,11 +395,7 @@ for each slice:
 | AllToAll | input 分片 → 每 remote CCL → output 分片 |
 | SendRecv | Send：input→可见区；Recv：对端区→output |
 
----
-
-## 5. 质量与过审
-
-### 5.1 异常、并发与生命周期
+### 3.6 异常、并发与生命周期
 
 | 场景 | 要求 |
 |---|---|
@@ -377,68 +407,3 @@ for each slice:
 
 - 默认同一 `(comm, tag)` **多 stream 并发不安全**；须三选一写死：调用方串行 / Host 加锁 / 分 tag。
 - ctx 随通信域；comm destroy 后不得再持有；Host cache 与 device ctx 生命周期一致。
-
-### 5.2 反模式（禁止项）
-
-| 禁止 | 正确做法 |
-|---|---|
-| 缓存 stream 绑定 thread | 每调 Acquire+Export；只放 OpParam |
-| ASC/C++ 双份算法 | 单一 `exec_op` |
-| notify 不成对 / 分支不对称 | 阶段表逐阶段审 |
-| CCL 越界 | 字节布局 + 对齐 bound |
-| 多算子共用粗 tag | tag 含 op/topo/版本 |
-| 先 notify 后 launch 失败不管 | 失败补偿/超时 |
-| BatchMode 漏 End | 统一出口 |
-| Mesh AllGather 当万能 | 走 L1/L2 |
-| 忽略白名单/签名 | 工程闭环写进方案 |
-
-### 5.3 构建、安装与测试
-
-| 产物 | 安装位置 |
-|---|---|
-| Host so / 头文件 | `opp/vendors/<vendor>/lib64`、`include` |
-| AICPU 包 / JSON | `opp/vendors/<vendor>/aicpu/kernel`、`config` |
-| 脚本/签名 | `opp/vendors/<vendor>/scripts` |
-
-```bash
-bash build.sh --vendor=cust --ops=<op_name> --custom_ops_path=./path/to/custom_op
-```
-
-安装后：白名单 `ascend_package_load.ini`；按规范处理签名；Host so 运行时可见。
-
-**测试至少覆盖**：A5 多卡自动校验；`rankSize==1`；不同 count/dataType；超 CCL loop；**二次调用**验证 engine ctx 复用；多通信域/多 stream（按并发策略）；非法参数与非 A5 门禁；ASC 下发失败与 notify 超时；**ASC 必测**（保留 ACLRT 则双路径一致）。
-
-### 5.4 开发顺序
-
-1. 定义 L2 语义与字节布局  
-2. 选 L1 拓扑，给出 thread/channel/notify 公式  
-3. 设计 API 与 tag  
-4. 产出 §4 强制三张表 + 回滚说明  
-5. 实现 Host（A5 门禁、双 engine、ASC、失败补偿）与唯一 `ExecOp`  
-6. CMake/JSON/签名/安装说明与 A5 testcase  
-7. 按下表过审  
-
-### 5.5 检查清单
-
-**架构与接口**
-
-- [ ] L0~L2 差异落点清晰；默认 ASC；ExecOp 单一源
-- [ ] 仅支持 A5；API/布局/count/dataType 明确
-
-**资源**
-
-- [ ] 资源真相表齐全；缓存键 `(comm, tag, engine)`
-- [ ] stream 句柄每调刷新且未进复用 ctx；tag 无冲突
-- [ ] thread/channel/notify 匹配拓扑
-
-**同步与算法**
-
-- [ ] 阶段表、notify 索引表、字节布局齐全
-- [ ] Host/thread/channel notify 成对；root/peer 无死锁
-- [ ] 分片 loop 与 `rankSize==1` 有方案
-
-**质量与工程**
-
-- [ ] 异常不致对端死等；BatchMode 成对；并发策略写死
-- [ ] A5 自动校验；复用/边界/超时/失败路径；ASC 必测
-- [ ] 白名单、签名、安装路径、环境变量齐全
