@@ -1,6 +1,6 @@
-# MC2 通信 API 性能标准
+# MC2 AICPU Comm Spec
 
-AIC 侧通信开销。Client 用 ticks，KFC 用 us，纯通信与 HCCL 持平。验证环境：8P fullmesh · 4K · 30 轮。
+MC2 通信 API 性能标准（AICPU 场景）。Client 用 ticks，KFC 用 us，纯通信与 HCCL 持平。验证环境：8P fullmesh · 4K · 30 轮。
 
 本标准只覆盖 MC2 通信 API 的软件开销，以及纯通信相对 HCCL 的持平要求。MC2 算子计算部分不给性能标准。三段分别打点、分别达标，不合成总分。`sq_expand(miss)` 仅参考，不做强校验。
 
